@@ -1,0 +1,8 @@
+.htpasswd
+.DS_Store
+.nextflow
+*.log
+trace*.txt
+work/
+log/
+zz_clear.pl
