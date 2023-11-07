@@ -6,3 +6,5 @@ trace*.txt
 work/
 log/
 zz_clear.pl
+run.bash
+zz_clear.pl
