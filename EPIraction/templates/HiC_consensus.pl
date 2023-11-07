@@ -4,12 +4,12 @@ use strict;
 use warnings;
 
 my $data_folder  = "!{data_folder}";
-my $sample       = "!{sample}";
 my $chrom        = "!{chrom}";
 my $regions      = "!{regions}";
 my $genome_bed   = "!{genome_file}";
 my $blanks_pl    = "!{blanks_pl}";
 my $distance     = 1000000;
+my $sample       = "Consensus.tissues.Encode.intact";
 
 die "not folder $data_folder" unless -d $data_folder;
 print "Working on $sample $chrom\n";
@@ -57,7 +57,7 @@ print "Done promoter and enhancer bed files\n";
 unless(-f "$prefix.2000.unsorted.done")
 {
     my %Pairs = ();
-    open FILE_IN,"java -Xmx15G -jar $data_folder/files/juicer_tools.jar dump observed SCALE $HiC_file $chrom $chrom BP 1000 | ";
+    open FILE_IN,"java -Xmx20G -jar $data_folder/files/juicer_tools.jar dump observed SCALE $HiC_file $chrom $chrom BP 1000 | ";
     while(my $string = <FILE_IN>)
     {
 	unless($string=~/^\d+\t\d+/)
@@ -87,7 +87,7 @@ unless(-f "$prefix.2000.unsorted.done")
 ###############################################################
 unless(-f "$prefix.sorted.bed.done")
 {
-    open FILE_OUT,"| LC_ALL=C sort --parallel=3 --buffer-size=16G -k 2,2n -k 4,4n - --temporary-directory='./' | pigz -p3 > $prefix.sorted.bed.gz";
+    open FILE_OUT,"| LC_ALL=C sort --parallel=6 --buffer-size=24G -k 2,2n -k 4,4n - --temporary-directory='./' | pigz -p3 > $prefix.sorted.bed.gz";
     open FILE_IN,"unpigz -p3 -c $prefix.2000.unsorted.gz |";
     my %Diagonal = ();
     while(my $string = <FILE_IN>)
@@ -116,7 +116,7 @@ unless(-f "$prefix.sorted.bed.done")
 unless(-f "$prefix.promoters.done")
 {
     open FILE_IN, "unpigz -p3 -c $prefix.sorted.bed.gz | bedtools intersect -a Promoters.bed -b stdin -wao -sorted -g $genome_bed |";
-    open FILE_OUT,"| LC_ALL=C sort --parallel=3 --buffer-size=16G -k 4,4 -k 2,2n - --temporary-directory='./' | pigz -p3 > $prefix.promoters.gz";
+    open FILE_OUT,"| LC_ALL=C sort --parallel=6 --buffer-size=24G -k 4,4 -k 2,2n - --temporary-directory='./' | pigz -p3 > $prefix.promoters.gz";
     while(my $string = <FILE_IN>)
     {
 	chomp $string;
@@ -130,22 +130,10 @@ unless(-f "$prefix.promoters.done")
     system "touch $prefix.promoters.done";
 }
 
-######################################################################################################
-####  Here I calculate contact probabilities. I load Consensus.tissues.Encode.intact HiC data and ####
-####  form the zero and +/- 2000 diagonal values promotionally to Consensus ones for every gene   ####
-######################################################################################################
-open FILE_IN,"unpigz -p3 -c $data_folder/temp/promoter/Consensus.tissues.Encode.intact.$chrom.probabilities.gz |";
-my %Consensus = ();
-while(my $string = <FILE_IN>)
-{
-    chomp $string;
-    my @Data = split "\t", $string;
-    push @{$Consensus{$Data[3]}},\@Data;
-}
-close FILE_IN;
-print "Load consensus\n";
-
-open FILE_OUT,"| pigz -p3 > $prefix.probabilities.gz";
+##################################################
+####  Here I calculate contact probabilities  ####
+##################################################
+open FILE_OUT,"| pigz -p6 > $prefix.probabilities.gz";
 open FILE_IN,"unpigz -p3 -c $prefix.promoters.gz |";
 my @Lines = ();
 my $string = <FILE_IN>;
@@ -179,7 +167,7 @@ print "Done probabilities\n";
 ####  Here I overlap with enhancers  ####
 #########################################
 open FILE_IN,"unpigz -p3 -c $prefix.probabilities.gz | bedSort stdin stdout | bedtools intersect -a Enhancers.bed -b stdin -wao -sorted -g $genome_bed |";
-open FILE_OUT,"| LC_ALL=C sort --parallel=3 --buffer-size=16G -k 1,1 -k 3,3n - --temporary-directory='./' | $blanks_pl | pigz -p3 > $prefix.overlap.gz";
+open FILE_OUT,"| LC_ALL=C sort --parallel=6 --buffer-size=24G -k 1,1 -k 3,3n - --temporary-directory='./' | $blanks_pl | pigz -p3 > $prefix.overlap.gz";
 while(my $string = <FILE_IN>)
 {
     chomp $string;
@@ -208,76 +196,21 @@ sub get_positions
 sub report_probability
 {
     my $list = $_[0];
-    my $gene_id = $list->[0]->[3];
-    return unless defined $Consensus{$gene_id};
-
     my @Sorted = sort { $b <=> $a } map { "$_->[5]" } grep { abs($_->[4]) <= 25000 } @{$list};
     return if $Sorted[0] < 5;
     return if $#Sorted < 5;
-    my $dist_2000 = 2*$Sorted[0]-$Sorted[1];
-    my $dist_0000 = 3*$Sorted[0]-$Sorted[1]-$Sorted[2];
+    my $dist_2000 = sprintf("%.6f",2*$Sorted[0]-$Sorted[1]);
+    my $dist_0000 = sprintf("%.6f",3*$Sorted[0]-$Sorted[1]-$Sorted[2]);
+    my @Center = grep { $list->[$_]->[4] == 0 } (0..$#{$list});
+    $list->[$Center[0]]->[5] = $dist_0000;
+    push @{$list},[$list->[$Center[0]]->[0],$list->[$Center[0]]->[1]-2000,$list->[$Center[0]]->[2]-2000,$list->[$Center[0]]->[3],-2000,$dist_2000];
+    push @{$list},[$list->[$Center[0]]->[0],$list->[$Center[0]]->[1]+2000,$list->[$Center[0]]->[2]+2000,$list->[$Center[0]]->[3],2000,$dist_2000];
 
-    my (%Current,%Complete,%Altogether)  = ();
-    map { $Current{$_->[1]}  = ["$_->[0]","$_->[1]","$_->[2]","$_->[3]","$_->[4]","$_->[5]"] } @{$list};
-    map { $Complete{$_->[1]} = ["$_->[0]","$_->[1]","$_->[2]","$_->[3]","$_->[4]","$_->[5]","$_->[6]"] } @{$Consensus{$gene_id}};
-    map { $Altogether{$_}++ } keys %Current;
-    map { $Altogether{$_}++ } keys %Complete;
-
-    my @Combined = ();
-    foreach my $position (sort { $a <=> $b } keys %Altogether)
+    foreach my $line (sort { $a->[1] <=> $b->[1] } @{$list})
     {
-	if(defined $Current{$position} and defined $Complete{$position})
-	{
-	    my @Report = (@{$Complete{$position}},$Current{$position}->[5]);
-	    push @Combined,\@Report;
-	}
-	elsif(not defined $Current{$position} and defined $Complete{$position})
-	{
-	    my @Report = (@{$Complete{$position}},0);
-	    push @Combined,\@Report;
-	}
-	elsif(defined $Current{$position} and not defined $Complete{$position})
-	{
-	    my @Report = ($Current{$position}->[0],$Current{$position}->[1],$Current{$position}->[2],$Current{$position}->[3],$Current{$position}->[4],0,0,$Current{$position}->[5]);
-	    push @Combined,\@Report;
-	}
-    }
-
-    my ($non_diagonal_consensus,$non_diagonal_current) = (0,0);
-    foreach my $line (@Combined)
-    {
-	next if abs($line->[4]) <= 2000;
-	$non_diagonal_consensus += $line->[5];
-	$non_diagonal_current   += $line->[7];
-    }
-    return if $non_diagonal_current < 10;
-    my $rescale = $non_diagonal_current/$non_diagonal_consensus;
-    print "$gene_id:\n";
-    print "non_diagonal_consensus\t$non_diagonal_consensus\n";
-    print "non_diagonal_current\t$non_diagonal_current\n";
-    print "rescale = ",sprintf("%.6f",$rescale),"\n";
-
-    foreach my $index (0..$#Combined)
-    {
-	next if abs($Combined[$index]->[4]) > 2000;
-	if(abs($Combined[$index]->[4]) == 2000)
-	{
-	    $dist_2000 = $Combined[$index]->[5]*$rescale if $dist_2000 < $Combined[$index]->[5]*$rescale;
-	    $Combined[$index]->[7] = sprintf("%.6f",$dist_2000);
-	}
-	if($Combined[$index]->[4]==0)
-	{
-	    $dist_0000 = $Combined[$index]->[5]*$rescale if $dist_0000 < $Combined[$index]->[5]*$rescale;
-	    $Combined[$index]->[7] = sprintf("%.6f",$dist_0000);
-	}
-    }
-
-    foreach my $line (@Combined)
-    {
-	next if $line->[7] == 0;
-	my $contact = $line->[7]/$dist_0000;
+	my $contact = $line->[5]/$dist_0000;
 	$contact = 1 if $contact > 1;
-	print FILE_OUT join "\t",@{$line}[0..4];
-	print FILE_OUT sprintf("\t%.6f\t%.8f\n",$line->[7],$contact);
+	print FILE_OUT join "\t", @{$line};
+	print FILE_OUT "\t",sprintf("%.8f",$contact),"\n";
     }
 }

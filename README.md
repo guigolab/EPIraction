@@ -17,20 +17,7 @@ R.utils 2.12.2 - https://cran.r-project.org/web/packages/R.utils
 data.table 1.14.6 - https://cran.r-project.org/web/packages/data.table
 glmnet 4.1-6 - https://cran.r-project.org/web/packages/glmnet
 Rfast 2.0.6 - https://cran.r-project.org/web/packages/Rfast
-nsprcomp 0.5.1-2 - https://cran.r-project.org/web/packages/nsprcomp
-r-wcorr 1.9.5 - https://cran.r-project.org/web/packages/wCorr
 
 Bioconductor R libraries (install them directly from R):
 BiocManager::install("preprocessCore", configure.args="--disable-threading")
 
-The easy way to create conda environment:
-conda create -n EPIraction python=3.7
-conda activate EPIraction
-conda install -c bioconda ucsc-bigwigaverageoverbed nextflow bedtools
-conda install -c conda-forge r-base r-r.utils r-data.table r-glmnet r-rfast r-biocmanager r-nsprcomp r-wcorr
-
-#Use this command to reset openssl:
-conda install -c conda-forge --force-reinstall openssl=1.1.1
-
-#Bioconductor R libraries (install it directly from R):
-BiocManager::install("preprocessCore", configure.args="--disable-threading")

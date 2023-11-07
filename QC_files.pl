@@ -1,118 +1,124 @@
 #!/usr/bin/env perl
 use strict;
 
-##################################################
-#### If EPIraction.config variables are valid ####
-##################################################
-open FILE_IN,"EPIraction.config" or die "no EPIraction.config file present in current folder\nExiting\n";
-my @Lines = <FILE_IN>;
-close FILE_IN;
-chomp @Lines;
+my $work_folder = `pwd`;
+chomp $work_folder;
 
-my @Good = grep { /data_folder\s*=\s*\'(.+)\'/;$_ = $1 } map { "$_" } @Lines;
-die "No data folder provided in EPIraction.config\nExpecting \"data_folder = '/users/project/encode_005982/EPIraction.Nextflow'\" in param block\nExiting\n" if $#Good == -1;
-die "Found many instances of data_folder:\n".(join "\n", @Good)."\nExiting\n" if $#Good > 0;
-
-my $data_folder = $Good[0];
-die "$data_folder is not a folder\nExiting\n" unless -d $data_folder;
-
-#### Good ####
-print "1.1 $data_folder                                    Good so far\n";
-##############
-
-@Good = grep { /tissues_index\s*=\s*\'(.+)\'/;$_ = $1 } map { "$_" } @Lines;
-die "\nNo tissues_index file provided in EPIraction.config\nExpecting \"tissues_index = 'EPIraction.tissues.data'\" in param block\nExiting\n" if $#Good == -1;
-die "Found many instances of tissues_index:\n".(join "\n", @Good)."\nExiting\n" if $#Good > 0;
-
-my $tissues_index = $Good[0];
-die "$data_folder/files/$tissues_index is not a file\nExiting\n" unless -f "$data_folder/files/$tissues_index";
-
-#### Good ####
-print "1.2 $data_folder/files/$tissues_index      Good so far\n";
-##############
-
-@Good = grep { /samples_index\s*=\s*\'(.+)\'/;$_ = $1 } map { "$_" } @Lines;
-die "\nNo samples_index file provided in EPIraction.config\nExpecting \"samples_index = 'EPIraction.H3K27ac.data'\" in param block\nExiting\n" if $#Good == -1;
-die "Found many instances of samples_index:\n".(join "\n", @Good)."\nExiting\n" if $#Good > 0;
-
-my $samples_index = $Good[0];
-die "$data_folder/files/$samples_index is not a file\nExiting\n" unless -f "$data_folder/files/$samples_index";
-
-#### Good ####
-print "1.3 $data_folder/files/$samples_index      Good so far\n";
-##############
-
-@Good = grep { /regions\s*=\s*\'(.+)\'/;$_ = $1 } map { "$_" } @Lines;
-die "\nNo regions file provided in EPIraction.config\nExpecting \"regions       = 'EPIraction.regions.bed'\" in param block\nExiting\n" if $#Good == -1;
-die "Found many instances of regions:\n".(join "\n", @Good)."\nExiting\n" if $#Good > 0;
-
-my $regions = $Good[0];
-die "$data_folder/files/$regions is not a file\nExiting\n" unless -f "$data_folder/files/$regions";
-
-#### Good ####
-print "1.4 $data_folder/files/$regions       Good so far\n\n";
-##############
-
-##############################################
-#### If all nessesary files are available ####
-##############################################
-die "\nThere is no Human.genome file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/Human.genome";
-print "2.1 $data_folder/files/Human.genome                 Good so far\n";
-
-die "\nThere is no Gencode.v40.promoters.data file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/Gencode.v40.promoters.data";
-print "2.2 $data_folder/files/Gencode.v40.promoters.data   Good so far\n";
-
-die "\nThere is no HiC.baseline file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/HiC.baseline";
-print "2.3 $data_folder/files/HiC.baseline                 Good so far\n";
-
-die "\nThere is no juicer_tools.jar file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/juicer_tools.jar";
-print "2.4 $data_folder/files/juicer_tools.jar             Good so far\n";
-
-die "\nThere is no Downstream.penalty file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/Downstream.penalty";
-print "2.5 $data_folder/files/Downstream.penalty           Good so far\n\n";
-
-die "\nThere is no Upstream.penalty file in $data_folder/files\nExiting\n" unless -f "$data_folder/files/Upstream.penalty";
-print "2.6 $data_folder/files/Upstream.penalty             Good so far\n\n";
-
-
-####################################################
-#### If all BigWigs and Hic files are available ####
-####################################################
-
-
-my ($tissues,undef) = load_data("$data_folder/files/$tissues_index");
-my ($samples,undef) = load_data("$data_folder/files/$samples_index");
-foreach my $tissue_id (sort { $a <=> $b } keys %{$tissues})
+##########################################
+#### If nessesary folders are present ####
+##########################################
+print "If nessesary folders are present:\n";
+my $index = 1;
+foreach my $folder ("BigWig","data","files","Glmnet","HiC.files","report","RSEM","temp","temp/Glmnet","temp/HiC","temp/promoter","temp/signal")
 {
-    my $data   = $tissues->{$tissue_id};
-    my $tissue = $data->{"tissue"};
-
-    my $sample = $data->{"Open.Chromatin"};
-    die "\n$data_folder/BigWig/$sample.bigWig (Open.Chromatin) absent\nExiting\n" unless -f "$data_folder/BigWig/$sample.bigWig";
-
-    $sample = $data->{"Cofactor"};
-    die "\n$data_folder/BigWig/$sample.bigWig (Cofactor) absent\nExiting\n" unless -f "$data_folder/BigWig/$sample.bigWig";
-
-    die "\n$data_folder/BigWig/$tissue.H3K27ac.consensus.bigWig absent\nExiting\n" unless -f "$data_folder/BigWig/$tissue.H3K27ac.consensus.bigWig";
-
-    foreach my $HiC (split ";", $data->{"HiC"})
+    if(-d "$work_folder/$folder")
     {
-	die "\n$data_folder/HiC.files/$HiC.hic absent\nExiting\n" unless -f "$data_folder/HiC.files/$HiC.hic";
+	print "1.$index Present $work_folder/$folder\n";
     }
-
-    foreach my $sample_id (grep { $samples->{$_}->{"tissue"} eq $tissue } sort { $a <=> $b } keys %{$samples})
+    else
     {
-	my $sample_data = $samples->{$sample_id};
-	my $sample = $sample_data->{"file"};
-	die "\n$data_folder/BigWig/$sample.H3K27ac.bigWig absent\nExiting\n" unless -f "$data_folder/BigWig/$sample.H3K27ac.bigWig";
+	print "1.$index Absent $work_folder/$folder\n";
+	exit;
     }
-    my $report = "3.$tissue_id";
-    $report.=" " while length $report < 6;
-    $report.="tissue=\"$tissue\", data files";
-    $report.=" " while length $report < 87;
-    print  "$report Good so far\n";
+    $index++;
 }
-print "\nAll files are there\n";
+print "All folders are here\n\n";
+
+##########################################################
+#### If nessesary index and support files are present ####
+##########################################################
+print "If nessesary index and support files are present:\n";
+$index = 1;
+foreach my $file ("EPIraction.H3K27ac.data","EPIraction.regions.bed","EPIraction.tissues.data","Gencode.v40.promoters.data","Human.promoters.bed","juicer_tools.jar")
+{
+    if(-f "$work_folder/files/$file")
+    {
+	print "2.$index Present $work_folder/files/$file\n";
+    }
+    else
+    {
+	print "2.$index Absent $work_folder/files/$file\n";
+	exit;
+    }
+    $index++;
+}
+print "All such files are here\n\n";
+
+#####################################################
+#### If bigWigs and expression files are present ####
+#####################################################
+my ($tissues,undef) = load_data("$work_folder/files/EPIraction.tissues.data");
+my ($samples,undef) = load_data("$work_folder/files/EPIraction.H3K27ac.data");
+my @Samples = sort { $a <=> $b } keys %{$samples};
+
+print "If all sample-specific H3K27ac files are present:\n";
+foreach my $tissue_index (sort { $a <=> $b } keys %{$tissues})
+{
+    my $tissue = $tissues->{$tissue_index}->{"tissue"};
+    my $total = 0;
+    foreach my $sample_id ( grep { $samples->{$_}->{"tissue"} eq $tissue } @Samples)
+    {
+	my $file = $samples->{$sample_id}->{"file"};
+	unless(-f "$work_folder/BigWig/$file.H3K27ac.bigWig")
+	{
+	    print "\n$work_folder/BigWig/$file.H3K27ac.bigWig absent\n";
+	    exit;
+	}
+	$total++;
+    }
+    print "3.$tissue_index Found $total *.H3K27ac.bigWig files for $tissue\n";
+}
+print "All sample-specific H3K27ac files are here\n\n";
+
+print "If all tissue-consensus files are present:\n";
+foreach my $tissue_index (sort { $a <=> $b } keys %{$tissues})
+{
+    my $tissue = $tissues->{$tissue_index}->{"tissue"};
+
+#####  RNAseq   #####
+    my $label  = $tissues->{$tissue_index}->{"RNA-seq"};
+    unless(-f "$work_folder/RSEM/$label.genes.results")
+    {
+	print "\n$work_folder/RSEM/$label.genes.results absent\n";
+	exit;
+    }
+
+#####  Open   #####
+    $label  = $tissues->{$tissue_index}->{"Open.Chromatin"};
+    unless(-f "$work_folder/BigWig/$label.bigWig")
+    {
+	print "\n$work_folder/BigWig/$label.bigWig absent\n";
+	exit;
+    }
+
+#####  Cofactor   #####
+    $label  = $tissues->{$tissue_index}->{"Cofactor"};
+    unless(-f "$work_folder/BigWig/$label.bigWig")
+    {
+	print "\n$work_folder/BigWig/$label.bigWig absent\n";
+	exit;
+    }
+
+#####  Hi-C   #####
+    foreach my $label (split ";", $tissues->{$tissue_index}->{"HiC"})
+    {
+	unless(-f "$work_folder/HiC.files/$label.hic")
+	{
+	    print "\n$work_folder/HiC.files/$label.hic absent\n";
+	    exit;
+	}
+    }
+    print "4.$tissue_index Found all tissue-consensus files for $tissue\n";
+}
+unless(-f "$work_folder/HiC.files/Consensus.tissues.Encode.intact.hic")
+{
+    print "\n$work_folder/HiC.files/Consensus.tissues.Encode.intact.hic absent\n";
+    exit;
+}
+print "4.78 Consensus.tissues.Encode.intact.hic present\n";
+print "All tissue-consensus files are here\n\n";
+
+print "It looks like all files are present.\nDo not forget to put the current folder '$work_folder'\ninto 'EPIraction.config' file within params section\nDone QC!!!!\n";
 
 sub load_data
 {
