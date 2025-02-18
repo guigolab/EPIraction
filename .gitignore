@@ -2,9 +2,11 @@
 .DS_Store
 .nextflow
 *.log
+*.out
 trace*.txt
 work/
 log/
-zz_clear.pl
 run.bash
 zz_clear.pl
+cluster_run.sh
+slurm_run.sh

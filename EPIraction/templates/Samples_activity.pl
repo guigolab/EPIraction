@@ -7,18 +7,25 @@ my $data_folder  = "!{data_folder}";
 my $samples_file = "!{samples_index}";
 my $tissue       = "!{tissue}";
 my $chromosomes  = "!{chromosomes}";
-
-die "wrong folder $data_folder\n" unless -d $data_folder;
+my $ctcf_impact  = 0.5;
 srand(127);
 
-my ($samples,undef) = load_data("$data_folder/files/$samples_file");
-my $prefix = "$data_folder/temp/signal/$tissue";
+die "wrong folder $data_folder\n" unless -d $data_folder;
+
+my ($samples,undef)    = load_data("$data_folder/files/$samples_file");
+my ($expression,undef) = load_data("$data_folder/data/$tissue.expression.data");
+my $prefix = "$data_folder/temp/samples/$tissue";
 
 foreach my $chromosome (split ", ", $chromosomes)
 {
     my %Activity = ();
+    if(-f "$prefix.$chromosome.data.done")
+    {
+	print "Already $prefix.$chromosome.data.done\n";
+    }
+
     open FILE_OUT,">Regions.$chromosome.bed";
-    open FILE_IN,"$data_folder/data/$tissue.regions.data";
+    open FILE_IN,"unpigz -p3 -c $data_folder/data/$tissue.regions.data.gz |";
     my $string = <FILE_IN>;
     chomp $string;
     my @Header = split "\t", $string;
@@ -30,8 +37,7 @@ foreach my $chromosome (split ", ", $chromosomes)
 	next unless $Data[0] eq $chromosome;
 	$total++;
 	print FILE_OUT "$Data[0]\t$Data[1]\t$Data[2]\t$Data[3]\n";
-	$Data[7] = 1 if $Data[7] < 1;
-	$Activity{$Data[3]} = ["$Data[7]","$Data[13]","$Data[6]"];
+	$Activity{$Data[3]} = ["$Data[8]","$Data[9]","$Data[10]","$Data[11]"];
     }
     close FILE_IN;
     close FILE_OUT;
@@ -49,29 +55,32 @@ foreach my $chromosome (split ", ", $chromosomes)
 	{
 	    chomp $string;
 	    my ($region,undef,undef,undef,undef,undef,undef,$signal) = split "\t", $string;
-	    $signal = 90 if $signal > 90;
-	    if($Activity{$region}->[2] eq "enhancer")
+	    if($region =~/^ENSG/ and $expression->{$region}->{"expression"} >= 1)
 	    {
-		if($Activity{$region}->[1] == 0)
-		{
-		    $Signal{$region} .= "\t0.000";
-		}
-		else
-		{
-		    my $rescale = ($signal/$Activity{$region}->[0])**0.5;
-		    my $report  = $rescale*$Activity{$region}->[1];
-		    $report     = 110 if $report > 110;
-		    $report     = sprintf("%.6f",$report);
-		    $Signal{$region} .= "\t$report";
-		}
+######----------For promoters of expressed protein-coding or lncRNA genes I set minimum H3K27ac and Open since I did it calculating tissue-consensus activity ------
+		my $Open     = $Activity{$region}->[0];
+		my $Cofactor = $Activity{$region}->[1];
+		my $CTCF     = $Activity{$region}->[2];
+		$signal      = 5 if $signal < 5;
+		$Open        = 5 if $Open < 5;
+		my $report   = sprintf("%.8f",sqrt($Open*($signal + $Cofactor)));
+		$Signal{$region} .= "\t$report";
+	    }
+	    elsif($Activity{$region}->[3] == 0)
+	    {
+######----------For non-active regions I set activity to zero------
+		my $report = "0.00000000";
+		$Signal{$region} .= "\t$report";
+		next;
 	    }
 	    else
 	    {
-		$signal     = 1 if $signal < 1;
-		my $rescale = ($signal/$Activity{$region}->[0])**0.5;
-		my $report  = $rescale*$Activity{$region}->[1];
-		$report     = 110 if $report > 110;
-		$report     = sprintf("%.6f",$report);
+######----------For the rest I calculate Activity conventually ------
+		my $Open     = $Activity{$region}->[0];
+		my $Cofactor = $Activity{$region}->[1];
+		my $CTCF     = $Activity{$region}->[2];
+		$Open        = 1 if $Open < 1;
+		my $report   = sprintf("%.8f",sqrt($Open*($signal + $Cofactor + $ctcf_impact*$CTCF)));
 		$Signal{$region} .= "\t$report";
 	    }
 	}
@@ -81,26 +90,25 @@ foreach my $chromosome (split ", ", $chromosomes)
     print "Load $chromosome samples\n";
 
     open FILE_OUT,"| gzip > $tissue.$chromosome.data.gz";
-    print FILE_OUT "region\tActivity.norm\tActivity.mean\tActivity.error\t",(join "\t", @List),"\n";
+    print FILE_OUT "region\tConsensus\tActivity.mean\tShift\t",(join "\t", @List),"\n";
 
     open FILE_IN,"Regions.$chromosome.bed";
     while(my $string = <FILE_IN>)
     {
 	chomp $string;
-	my @Data = split "\t", $string;
+	my @Data   = split "\t", $string;
 	$Signal{$Data[3]} =~s/^\t//;
-	my ($sum,$count) = (0,0);
-	map { $sum+=$_;$count++ } split "\t", $Signal{$Data[3]};
-	my $Activity_norm  = $Activity{$Data[3]}->[1];
-	$Activity_norm     = 0.1 if $Activity_norm < 0.1;
-	my $Activity_mean  = sprintf("%.6f",$sum/$count);
-	my $Activity_error = sprintf("%.6f",abs($Activity_norm - $Activity_mean)/$Activity_norm);
-	$Activity_error = sprintf("%.6f",abs($Activity_norm - $Activity_mean)) if $Activity_norm < 1;
-	
-	print FILE_OUT "$Data[3]\t$Activity_norm\t$Activity_mean\t$Activity_error\t",$Signal{$Data[3]},"\n";
+	my @Values = split "\t", $Signal{$Data[3]};
+	my ($mean,$count) = (0,0);
+	map { $mean+=$_;$count++ } split "\t", $Signal{$Data[3]};
+	$mean = sprintf("%.8f",$mean/$count);
+	my $Consensus = $Activity{$Data[3]}->[3];
+	my $difference = sprintf("%.8f",$Consensus - $mean);
+	print FILE_OUT "$Data[3]\t$Consensus\t$mean\t$difference\t",$Signal{$Data[3]},"\n";
     }
     close FILE_OUT;
     system "mv $tissue.$chromosome.data.gz $prefix.$chromosome.data.gz";
+    system "touch $prefix.$chromosome.data.done";
     system "rm -f Regions.$chromosome.bed";
     print "Done $tissue.$chromosome.data.gz\n";
 }

@@ -8,7 +8,7 @@ my $chrom        = "!{chrom}";
 my $regions      = "!{regions}";
 my $genome_bed   = "!{genome_file}";
 my $distance     = 2000000;
-my $sample       = "!{sample}";
+my $sample       = "Consensus.tissues.Encode.intact";
 
 die "wrong folder $data_folder" unless -d $data_folder;
 print "Working on $sample $chrom\n";

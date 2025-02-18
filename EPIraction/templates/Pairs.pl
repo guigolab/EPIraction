@@ -1,37 +1,40 @@
 #!/usr/bin/perl -w
 use strict;
 
-my $data_folder   = "!{data_folder}";
-my $regions       = "!{regions}";
-my $chrom         = "!{chrom}";
+my $data_folder = "!{data_folder}";
+my $regions     = "!{regions}";
+my $chrom       = "!{chrom}";
+my $distance    = 2000000;
 die "wrong folder $data_folder\n" unless -d $data_folder;
 
-if(-f "$data_folder/data/zzz.Pairs.$chrom.gz")
-{
-    print "already $data_folder/data/zzz.Pairs.$chrom.gz\n";
-    exit;
-}
-
-open FILE_IN,"$data_folder/files/$regions";
 open PROMOTERS,">Promoters.bed";
-open ENHANCERS,">Enhancers.bed";
+open FILE_IN,"$data_folder/files/Human.promoters.bed";
 while(my $string = <FILE_IN>)
 {
+    chomp $string;
     my @Data = split "\t", $string;
     next unless $Data[0] eq $chrom;
-    if($Data[3] =~ /^ENSG/)
-    {
-	print PROMOTERS $string;
-    }
-    else
-    {
-	print ENHANCERS $string;
-    }
+    print PROMOTERS join "\t",@Data[0..3];
+    print PROMOTERS "\n";
+}
+close FILE_IN;
+close PROMOTERS;
+
+open ENHANCERS,">Enhancers.bed";
+open FILE_IN,"$data_folder/files/EPIraction.regions.bed";
+while(my $string = <FILE_IN>)
+{
+    chomp $string;
+    my @Data = split "\t", $string;
+    next unless $Data[0] eq $chrom;
+    print ENHANCERS join "\t",@Data[0..3];
+    print ENHANCERS "\n";
 }
 close FILE_IN;
 close ENHANCERS;
-close PROMOTERS;
-system "bedtools window -a Promoters.bed -b Enhancers.bed -w 1000000 | gzip > Overlap.gz";
+print "Done promoter and enhancer bed files\n";
+
+system "bedtools window -a Promoters.bed -b Enhancers.bed -w $distance | gzip > Overlap.gz";
 
 open FILE_OUT,"| gzip > Pairs.gz";
 print FILE_OUT "promoter\tcount\tlist\n";
@@ -48,6 +51,7 @@ while(my $string = <FILE_IN>)
 {
     chomp $string;
     my @Current = split "\t", $string;
+#    next if $Current[3] eq $Current[7];
     $All_genes{$Current[3]}++;
     if($Current[3] eq $Pairs[0]->[3])
     {

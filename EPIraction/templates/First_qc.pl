@@ -18,12 +18,12 @@ print "==============================";
 print FILE_OUT "==============================";
 foreach my $tissue (sort split ", ", $tissues)
 {
-    unless(-f "$data_folder/data/$tissue.regions.data")
+    unless(-f "$data_folder/data/$tissue.regions.data.gz")
     {
-	print "Absent $data_folder/data/$tissue.regions.data";
+	print "Absent $data_folder/data/$tissue.regions.data.gz";
 	exit(127);
     }
-    open FILE_IN,"$data_folder/data/$tissue.regions.data";
+    open FILE_IN,"unpigz -p3 -c $data_folder/data/$tissue.regions.data.gz |";
     my $string = <FILE_IN>;
     my ($promoters,$enhancers) = (0,0);
     while($string = <FILE_IN>)
@@ -65,9 +65,9 @@ foreach my $hic_sample (split ", ", $hic_samples)
     foreach my $chrom (@Chroms)
     {
 	my $prefix = "$hic_sample.$chrom";
-	unless(-f "$data_folder/temp/HiC/$prefix.overlap.gz")
+	unless(-f "$data_folder/temp/contacts/$prefix.overlap.gz")
 	{
-	    print "Absent $data_folder/temp/HiC/$prefix.overlap.gz";
+	    print "Absent $data_folder/temp/contacts/$prefix.overlap.gz";
 	    exit(127);
 	}
     }

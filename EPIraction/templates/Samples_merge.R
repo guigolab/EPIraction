@@ -15,21 +15,21 @@ chromosome   = "!{chrom}"
 cat("Data: ",data_folder,"\n")
 cat("Chrom:",chromosome,"\n")
 
-data_matrix = fread(file = sprintf("%s/temp/signal/%s.%s.data.gz", data_folder, tissues[1], chromosome), sep='\t', header=T, stringsAsFactors=FALSE, nThread = cores, tmpdir="./")
+data_matrix = fread(file = sprintf("%s/temp/samples/%s.%s.data.gz", data_folder, tissues[1], chromosome), sep='\t', header=T, stringsAsFactors=FALSE, nThread = cores, tmpdir="./")
 setDT(data_matrix)
-data_matrix[,Activity.norm:=NULL]
+data_matrix[,Consensus:=NULL]
 data_matrix[,Activity.mean:=NULL]
-data_matrix[,Activity.error:=NULL]
+data_matrix[,Shift:=NULL]
 
 cat("Added",tissues[1],"\n")
 
 for(index in 2:length(tissues))
 {
-    work_matrix = fread(file = sprintf("%s/temp/signal/%s.%s.data.gz", data_folder, tissues[index], chromosome), sep='\t', header=T, stringsAsFactors=FALSE, nThread = cores, tmpdir="./")
+    work_matrix = fread(file = sprintf("%s/temp/samples/%s.%s.data.gz", data_folder, tissues[index], chromosome), sep='\t', header=T, stringsAsFactors=FALSE, nThread = cores, tmpdir="./")
     setDT(work_matrix)
-    work_matrix[,Activity.norm:=NULL]
+    work_matrix[,Consensus:=NULL]
     work_matrix[,Activity.mean:=NULL]
-    work_matrix[,Activity.error:=NULL]
+    work_matrix[,Shift:=NULL]
 
     data_matrix = merge(data_matrix,work_matrix, by = "region", sort = F)
     cat("Added",tissues[index],"\n")

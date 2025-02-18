@@ -5,94 +5,147 @@ my $data_folder  = "!{data_folder}";
 my $tissue       = "!{tissue}";
 my $genome_file  = "!{genome_file}";
 my $interact     = "!{interact}";
-my $baseline_hic = "!{HiC_baseline}";
+my $version      = "!{version}";
+my $minimum_exp  = "!{minimum_exp}";
+my $promoter_min = 0.05;
+my $substantial  = 0.01;
+srand(127);
 
 die "wrong folder $data_folder\n" unless -d $data_folder;
 
-my $HiC_baseline  = load_baseline();
-my ($genes,undef) = load_data("$data_folder/files/Gencode.v40.promoters.data");
+my (%Regions,%Contacts,@Genes,%Promoters) = ();
+my ($genes,undef) = load_data("$data_folder/files/Gencode.v40.genes.data");
 
-open PROMOTERS,"| gzip > Genes.bed.gz";
-print PROMOTERS "#chrom\tstart\tend\tgene_id\tscore\tstrand\tSymbol\tTSS\tTPMs\tH3K27ac\tOpen\tActivity\tsample\n";
-
-open ENHANCERS,"| gzip > Enhancers.bed.gz";
-print ENHANCERS "#chrom\tstart\tend\tenhancer\tscore\tstrand\tH3K27ac\tOpen\tCofactor\tActivity\tsample\n";
-
-my (%Promoters,%Enhancers) = ();
-open FILE_IN,"$data_folder/data/$tissue.regions.data";
+open FILE_IN,"$data_folder/data/$tissue.expression.data";
 my $string = <FILE_IN>;
+chomp $string;
+my @Header = split "\t", $string;
+my %Expression = ();
 while($string = <FILE_IN>)
 {
     chomp $string;
-    my @Data = split "\t", $string;
-    if($Data[3]=~/^ENSG/)
+    my ($gene_id,$chrom,$type,$expression,$symbol) = split "\t", $string;
+    $Expression{$gene_id} = $expression;
+    next if $expression < $minimum_exp;
+    push @Genes,$gene_id;
+}
+close FILE_IN;
+print "Load expressed\n";
+
+open PROMOTERS,"> Genes.bed";
+print PROMOTERS "#chrom\tstart\tend\tgene_id\tscore\tstrand\ttype\tSymbol\tTSS\tTPMs\tH3K27ac\tOpen\tCofactor\tCTCF\tActivity\tsample\tversion\n";
+
+open ENHANCERS,">Enhancers.bed";
+print ENHANCERS "#chrom\tstart\tend\tenhancer\tscore\tstrand\ttype\tH3K27ac\tOpen\tCofactor\tCTCF\tActivity\tsample\tversion\n";
+
+open FILE_IN,"unpigz -p3 -c $data_folder/data/$tissue.regions.data.gz |";
+$string = <FILE_IN>;
+chomp $string;
+@Header = split "\t", $string;
+
+while($string = <FILE_IN>)
+{
+    chomp $string;
+    my @Data      = split "\t", $string;
+    my $signals   = sprintf("%.4f\t%.4f\t%.4f\t%.4f\t%.8f",$Data[7],$Data[8],$Data[9],$Data[10],$Data[11]);
+    my $position  = join "\t", @Data[0,1,2,3,6];
+    my $region_id = $Data[3];
+    $Regions{$region_id} = [$position,$signals];
+
+    if($region_id =~ /^ENSG/)
     {
-	my $gene_data = $genes->{$Data[3]};
-	print PROMOTERS join "\t", @Data[0..5];
-	print PROMOTERS "\t",$gene_data->{"Symbol"},"\t",$gene_data->{"TSS"},"\t",(join "\t", @Data[10,7,8,13,12]),"\n";
+	my $gene_data  = $genes->{$region_id};
+	my $expression = $Expression{$region_id};
+	if($gene_data->{"type"} eq "protein" and $expression >= 1)
+	{
+	    print PROMOTERS join "\t", @Data[0..5];
+	    print PROMOTERS "\t",$gene_data->{"type"},"\t",$gene_data->{"Symbol"},"\t",$gene_data->{"TSS"},"\t$expression\t$signals\t$tissue\t$version\n";
+	    $Promoters{$Data[3]} = ["$Data[0]","$Data[1]","$Data[2]"];
+	}
+	elsif($gene_data->{"type"} eq "lncRNA" and $expression >= 1)
+	{
+	    print PROMOTERS join "\t", @Data[0..5];
+	    print PROMOTERS "\t",$gene_data->{"type"},"\t",$gene_data->{"Symbol"},"\t",$gene_data->{"TSS"},"\t$expression\t$signals\t$tissue\t$version\n";
+	    $Promoters{$Data[3]} = ["$Data[0]","$Data[1]","$Data[2]"];
+
+	    print ENHANCERS join "\t", @Data[0..6];
+	    print ENHANCERS "\t$signals\t$tissue\t$version\n";
+	}
+	elsif($gene_data->{"type"} eq "lncRNA" and $Data[11] > 0)
+	{
+	    print ENHANCERS join "\t", @Data[0..6];
+	    print ENHANCERS "\t$signals\t$tissue\t$version\n";
+	}
     }
     else
     {
-	next if $Data[13] == 0;
-	my $signals  = join "\t",@Data[7,8,9,13];
-	my $position = join "\t",@Data[0..3];
-	print ENHANCERS join "\t", @Data[0..5];
-	print ENHANCERS "\t$signals\t$tissue\n";
-	$Enhancers{$Data[3]} = [$position,$signals];
+	next if $Data[11] == 0;
+	print ENHANCERS join "\t", @Data[0..6];
+	print ENHANCERS "\t$signals\t$tissue\t$version\n";
+	$Regions{$Data[3]} = [$position,$signals];
     }
 }
 close FILE_IN;
 close PROMOTERS;
 close ENHANCERS;
+print "Load regions\n";
 
-open FILE_IN,"zcat $data_folder/data/$tissue.contacts.data.gz |";
-my %HiC = ();
+open FILE_IN,"unpigz -p3 -c $data_folder/data/$tissue.contacts.data.gz |";
 $string = <FILE_IN>;
+chomp $string;
+@Header = split "\t", $string;
+
 while($string = <FILE_IN>)
 {
+    next if $string =~/^#/;
     chomp $string;
-    next if $string eq "";
     my @Data = split "\t", $string;
-    $HiC{"$Data[2]<>$Data[3]"} = [$Data[4],sprintf("%.5f\t%.5f",$Data[6],$Data[8])];
+    next if $Expression{$Data[1]} < $minimum_exp;
+    next if $Data[4] == 0;
+    $Data[2] =~s/^\s+//;
+    $Contacts{"$Data[1]<>$Data[2]"} = ["$Data[3]","$Data[5]\t$Data[7]"];
 }
 close FILE_IN;
+print "Load contacts\n";
 
-open FILE_OUT,"| gzip > Pairs.bed.gz";
-print FILE_OUT "#chr\tstart\tend\tname\tclass\tTargetGene\tTargetGeneEnsemblID\tTargetGeneTSS\tCellType\tScore\tDistanceToTSS\tH3K27ac\tOpen\tCofactor\tActivity\tHiC_Contacts\tHiC_FoldChange\n";
+open FILE_OUT,">Pairs.bed";
+print FILE_OUT "#chr\tstart\tend\tname\tclass\tTargetGene\tTargetGeneEnsemblID\tTargetGeneTSS\tCellType\tScore\tDistanceToTSS\tH3K27ac\tOpen\tCofactor\tCTCF\tActivity\treward\tabc_tissue\tabc_closest\tabc_complete\tHiC_contacts\tHiC_foldchange\tVersion\n";
 
-opendir DIR,"$data_folder/temp/Glmnet";
+opendir DIR,"$data_folder/temp/batches";
 foreach my $file (sort { compare_files($a,$b) } grep { /$tissue/ }  grep{ /pairs.data.gz/} readdir DIR)
 {
-    open FILE_IN,"zcat $data_folder/temp/Glmnet/$file |";
+    open FILE_IN,"zcat $data_folder/temp/batches/$file |";
     $string = <FILE_IN>;
+    my @List = ();
     while($string = <FILE_IN>)
     {
 	chomp $string;
 	if($string =~/^#/)
 	{
-	    print FILE_OUT "#\n";
+	    report_gene(\@List);
+	    @List = ();
 	    next;
 	}
-	my ($promoter,$enhancer,$impact) = split "\t", $string;
-	next if $enhancer =~ /promoter/;
-	next unless defined $Enhancers{$enhancer};
-	my $gene_data = $genes->{$promoter};
-	print FILE_OUT $Enhancers{$enhancer}->[0],"\tenhancer\t",$gene_data->{"Symbol"},"\t$promoter\t",$gene_data->{"TSS"},"\t$tissue\t$impact\t";
-	print FILE_OUT $HiC{"$promoter<>$enhancer"}->[0],"\t",$Enhancers{$enhancer}->[1],"\t",$HiC{"$promoter<>$enhancer"}->[1],"\n";
+	else
+	{
+	    my @Data = split "\t", $string;
+	    $Data[1] =~ s/^\s+//;
+	    push @List,\@Data;
+	}
     }
     close FILE_IN;
-    print "Load $file\n";
+    print "Done $file\n";
 }
 close FILE_OUT;
+print "Done EPIraction complete\n";
 
-my $promoters = load_promoters();
-
-open FILE_IN,"zcat Pairs.bed.gz |";
+open FILE_IN,"Pairs.bed";
 $string = <FILE_IN>;
 chomp $string;
-my @Header = split "\t", $string;
-open FILE_OUT,"| gzip > Threshold.bed.gz";
-print FILE_OUT $string,"\n";
+@Header = split "\t", $string;
+open FILE_OUT,">Threshold.bed";
+print FILE_OUT "#chr\tstart\tend\tname\tclass\tTargetGene\tTargetGeneEnsemblID\tTargetGeneTSS\tCellType\tScore\tDistanceToTSS\tH3K27ac\tOpen\tCofactor\tCTCF\tActivity\tHiC_contacts\tVersion\n";
+
 open FILE_INTERACT,"| LC_ALL=C sort --parallel=1 --buffer-size=1G -k 1,1d -k 14,14d -k 2,2n -k 15,15n - --temporary-directory='./' > Pairs.interact";
 my @Pairs = ();
 while($string = <FILE_IN>)
@@ -100,7 +153,7 @@ while($string = <FILE_IN>)
     chomp $string;
     if($string =~/^\#/)
     {
-	&report_pair();
+	&report_threshold(\@Pairs);
 	@Pairs = ();
     }
     else
@@ -110,102 +163,159 @@ while($string = <FILE_IN>)
     }
 }
 close FILE_IN;
-&report_pair();
 close FILE_OUT;
 close FILE_INTERACT;
+print "Done EPIraction threshold\n";
 
 system "bedToBigBed -as=$interact -type=bed5+13 Pairs.interact $genome_file Threshold.bb";
 
 open FILE_IN,"Pairs.interact";
-open FILE_OUT,"| gzip > Threshold.bedpe.gz";
+open FILE_OUT,">Threshold.bedpe";
+open FILE_STRONG,">Pairs.strong";
 print FILE_OUT "#chrom1\tstart1\tend1\tchrom2\tstart2\tend2\tname\tscore\tstrand1\tstrand2\tEPIraction_score\tcolor\n";
 while($string = <FILE_IN>)
 {
     chomp $string;
     my @Data = split "\t", $string;
-    print FILE_OUT join "\t", @Data[8,9,10,13,14,15];
-    my $score = sprintf("%d",$Data[5]*5000);
-    $score = 1000 if $score > 1000;
-    if($Data[16] =~/^ENSG/)
-    {
-	print FILE_OUT "\t$Data[11]:vs:$Data[16]\t$score\t.\t.\t$Data[5]\t$Data[7]\n";
-    }
-    else
-    {
-	print FILE_OUT "\t$Data[16]:vs:$Data[11]\t$score\t.\t.\t$Data[5]\t$Data[7]\n";
-    }
+    print FILE_OUT join "\t", @Data[8,9,10,13,14,15,3,4];
+    print FILE_OUT "\t.\t.\t$Data[5]\t$Data[7]\n";
+    print FILE_STRONG $string,"\n" if $Data[5] >= 0.03;
 }
 close FILE_IN;
 close FILE_OUT;
+close FILE_STRONG;
 
-system "mv Genes.bed.gz      $data_folder/report/EPIraction.$tissue.genes.bed.gz";
-system "mv Enhancers.bed.gz  $data_folder/report/EPIraction.$tissue.enhancers.bed.gz";
-system "mv Pairs.bed.gz      $data_folder/report/EPIraction.$tissue.complete.pairs.bed.gz";
-system "mv Threshold.bed.gz  $data_folder/report/EPIraction.$tissue.threshold.pairs.bed.gz";
+system "bedToBigBed -as=$interact -type=bed5+13 Pairs.strong $genome_file Strong.bb";
 
+system "pigz -p2 Pairs.bed";
+system "pigz -p2 Genes.bed";
+system "pigz -p2 Enhancers.bed";
+system "pigz -p2 Threshold.bed";
+system "pigz -p2 Threshold.bedpe";
+
+system "mv Pairs.bed.gz       $data_folder/report/EPIraction.$tissue.complete.pairs.bed.gz";
+system "mv Genes.bed.gz       $data_folder/report/EPIraction.$tissue.genes.bed.gz";
+system "mv Enhancers.bed.gz   $data_folder/report/EPIraction.$tissue.enhancers.bed.gz";
+system "mv Threshold.bed.gz   $data_folder/report/EPIraction.$tissue.threshold.pairs.bed.gz";
 system "mv Threshold.bedpe.gz $data_folder/report/EPIraction.$tissue.threshold.pairs.bedpe.gz";
 system "mv Threshold.bb       $data_folder/report/EPIraction.$tissue.threshold.pairs.bb";
-
+system "mv Strong.bb          $data_folder/report/EPIraction.$tissue.strong.pairs.bb";
 system "rm -f Pairs.interact";
 
-sub report_pair
+sub report_threshold
 {
-    return if $#Pairs == -1;
-    my @Subsantial = grep { $_->[9] >= 0.01 } @Pairs;
-    return if $#Pairs == -1;
-    foreach my $pair_data (@Subsantial)
+    my $array_ref = $_[0];
+    return if $#$array_ref == -1;
+    my @Substantial = grep { $_->[9] >= $substantial } @{$array_ref};
+    return if $#Substantial == -1;
+    my $gene_id = $array_ref->[0]->[6];
+
+    foreach my $pair_data (@Substantial)
     {
-	print FILE_OUT join "\t", @{$pair_data};
-	print FILE_OUT "\n";
+	print FILE_OUT join "\t", @{$pair_data}[(0..15),21];print FILE_OUT "\t$version\n";
+	next if $pair_data->[4] eq "promoter";
 
-	my $color = "#cacfd3";
-	my $score = sprintf("%d",$pair_data->[9]*5000);
+	my $score = sprintf("%d",$pair_data->[9]*10000);
 	$score = 1000 if $score > 1000;
-
-	if($pair_data->[9] > 0.15)
+	my $color = "";
+	if($pair_data->[9] > 0.10)
 	{
-	    $color = "#000000";
+	    $color = "#00b400";
 	}
 	elsif($pair_data->[9] > 0.05)
 	{
 	    $color = "#1e8450";
 	}
-	
-	if($pair_data->[1] < $promoters->{$pair_data->[6]}->[1])
+	else
 	{
-	    print FILE_INTERACT "$pair_data->[0]\t$pair_data->[1]\t$pair_data->[2]\t$pair_data->[3]\t$score\t$pair_data->[9]\t$tissue\t$color\t";
-	    print FILE_INTERACT "$pair_data->[0]\t$pair_data->[1]\t$pair_data->[2]\t$pair_data->[3]\t.\t",$promoters->{$pair_data->[6]}->[0],"\t$pair_data->[6]\t.\n";
+	    $color = "#8e7cc3";
+	}
+	my $promoter_bed4 = $Promoters{$gene_id}->[0]."\t".$Promoters{$gene_id}->[1]."\t".$Promoters{$gene_id}->[2]."\t$gene_id";
+	my $enhancer_bed4 = "$pair_data->[0]\t$pair_data->[1]\t$pair_data->[2]\t$pair_data->[3]";
+	
+	if($pair_data->[1] < $Promoters{$gene_id}->[1])
+	{
+	    my $complete_bed = "$pair_data->[0]\t$pair_data->[1]\t".$Promoters{$gene_id}->[2]."\t$pair_data->[3]:$gene_id";
+	    print FILE_INTERACT "$complete_bed\t$score\t$pair_data->[9]\t$tissue\t$color\t$enhancer_bed4\t.\t$promoter_bed4\t.\n";
 	}
 	else
 	{
-	    print FILE_INTERACT $promoters->{$pair_data->[6]}->[0],"\t$pair_data->[6]\t$score\t$pair_data->[9]\t$tissue\t$color\t";
-	    print FILE_INTERACT $promoters->{$pair_data->[6]}->[0],"\t$pair_data->[6]\t.\t$pair_data->[0]\t$pair_data->[1]\t$pair_data->[2]\t$pair_data->[3]\t.\n";
+	    my $complete_bed = "$pair_data->[0]\t".$Promoters{$gene_id}->[1]."\t$pair_data->[2]\t$pair_data->[3]:$gene_id";
+	    print FILE_INTERACT "$complete_bed\t$score\t$pair_data->[9]\t$tissue\t$color\t$promoter_bed4\t.\t$enhancer_bed4\t.\n";
 	}
     }
-    print FILE_OUT "#\n";
+    print FILE_OUT "###\n";
 }
 
-sub load_promoters
+sub report_gene
 {
-    my %ret_h = ();
-    open FILE_IN,"$data_folder/files/Gencode.v40.promoters.data";
-    my $string = <FILE_IN>;
-    while($string = <FILE_IN>)
+    my $array_ref = $_[0];
+    return if $#$array_ref == -1;
+    my $gene_id   = $array_ref->[0]->[0];
+    my $TSS       = $genes->{$gene_id}->{"TSS"};
+    my $symbol    = $genes->{$gene_id}->{"Symbol"};
+    my $chrom     = $genes->{$gene_id}->{"chrom"};
+
+    my ($promoter_index,$promoter_abc,$sum_abc) = ();
+    my $shift_promoter = "not";
+
+    foreach my $index (0..$#$array_ref)
     {
-	chomp $string;
-	my @Data = split "\t", $string;
-	$ret_h{"$Data[0]"} = ["$Data[1]\t".($Data[3]-200)."\t".($Data[3]+200),$Data[3]];
-    }
-    close FILE_IN;
-    return \%ret_h;
-}
+	my $feature_id   = $array_ref->[$index]->[1];
+	my $abc_tissue   = $array_ref->[$index]->[2];
+	my $abc_closest  = $array_ref->[$index]->[3];
+	my $abc_complete = $array_ref->[$index]->[4];
+	$sum_abc        += $abc_tissue;
 
-sub compare_files
-{
-    my ($AAA,$BBB) = @_;
-    my @AAA = split /\./, $AAA;
-    my @BBB = split /\./, $BBB;
-    return $AAA[-4] <=> $BBB[-4];
+	if($feature_id eq $gene_id)
+	{
+	    $promoter_index = $index;
+	    $promoter_abc   = $abc_tissue;
+	    push @{$array_ref->[$index]},($abc_tissue,0);
+	}
+	else
+	{
+	    my $reward     = $abc_closest - $abc_complete;
+	    $reward        = 0 if $reward < 0;
+	    $reward        = $abc_tissue if $reward > $abc_tissue;
+	    push @{$array_ref->[$index]},($abc_tissue,$reward);
+	}
+    }
+
+    my $promoter_fraction = $promoter_abc/$sum_abc;
+    if($promoter_fraction < $promoter_min)
+    {
+	my $shift = ($promoter_min*$sum_abc - $promoter_abc)/(1-$promoter_min);
+	$array_ref->[$promoter_index]->[5] += $shift;
+	$sum_abc += $shift;
+    }
+
+    foreach my $line (sort { $b->[5] <=> $a->[5] } @{$array_ref})
+    {
+	my $enhancer   = $line->[1];
+	my $pos_report = $Regions{$enhancer}->[0];
+	if($enhancer eq $gene_id)
+	{
+	    my @Position_bed = split "\t",$Regions{$gene_id}->[0];
+	    $Position_bed[-1] = "promoter";
+	    $pos_report = join "\t", @Position_bed;
+	}
+	my $abc_tissue   = $line->[2];
+	my $abc_closest  = $line->[3];
+	my $abc_complete = $line->[4];
+
+	my $base_score   = $line->[5]/$sum_abc;
+	my $reward       = $line->[6]/$sum_abc;
+	$reward          = 0.1 if $reward > 0.1;
+	$reward          = sprintf("%.10f",$reward);
+	my $score        = sprintf("%.10f",$base_score+$reward);
+
+	next if $score == 0;
+	my $contact_data = [0,"1.000000\t1.00"];
+	$contact_data = $Contacts{"$gene_id<>$enhancer"} if defined $Contacts{"$gene_id<>$enhancer"};
+	print FILE_OUT "$pos_report\t$symbol\t$gene_id\t$TSS\t$tissue\t$score\t$contact_data->[0]\t",$Regions{$enhancer}->[1],"\t$reward\t$abc_tissue\t$abc_closest\t$abc_complete\t$contact_data->[1]\t$version\n";
+    }
+    print FILE_OUT "###\n";
 }
 
 sub load_data
@@ -229,25 +339,18 @@ sub load_data
     return (\%Hash_data,\@Head);
 }
 
-sub load_baseline
-{
-    my %ret_h = ();
-    open FILE_IN,$baseline_hic or die "Absent $baseline_hic";
-    $string = <FILE_IN>;
-    while($string = <FILE_IN>)
-    {
-	chomp $string;
-	my @Data = split "\t", $string;
-	$ret_h{$Data[0]} = $Data[1];
-    }
-    close FILE_IN;
-    return \%ret_h;
-}
-
 sub get_200_distance
 {
     my $value = $_[0];
     return 1000000 if $value >= 999900;
     my $times = int(($value+100)/200);
     return $times*200;
+}
+
+sub compare_files
+{
+    my ($AAA,$BBB) = @_;
+    my @AAA = split /\./, $AAA;
+    my @BBB = split /\./, $BBB;
+    return $AAA[-4] <=> $BBB[-4];
 }

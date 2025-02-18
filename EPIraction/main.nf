@@ -8,11 +8,14 @@ regions       = params.regions
 chromosomes   = channel.of("chr1","chr2","chr3","chr4","chr5","chr6","chr7","chr8","chr9","chr10","chr11","chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr20","chr21","chr22","chrX").toList()
 chrom_batches = channel.of("chr1, chr13, chr17, chr19", "chr14, chr2, chrX", "chr16, chr21, chr3, chr6", "chr12, chr4, chr5", "chr11, chr20, chr7, chr8", "chr10, chr15, chr18, chr22, chr9").toList()
 
-transform_aaa = 20.94289549
-transform_bbb = 70.34457472
+////////////////////////////////////////
+/* Pipeline workflow status variables */
+////////////////////////////////////////
+minimum_expression = 1
+genes_blocks       = 100
+analysis_blocks    = 300
+version            = "v1.6"
 
-annotation_done = "yes"
-normalize_done  = "yes"
 activity_done   = "yes"
 
 samples_done    = "yes"
@@ -28,11 +31,12 @@ contacts_done   = "yes"
 contacts_merge  = "yes"
 
 data_status     = "yes"
-glmnet_done     = "yes"
+analysis_done   = "yes"
+
 
 // Print log information
 log.info """
-Welcome to EPIraction 1.2, nextflow implementation
+Welcome to EPIraction 1.6, nextflow implementation
 
 data_folder : $data_folder
 tissues     : $tissues_index
@@ -41,9 +45,9 @@ regions     : $regions
 projectDir  : $projectDir
 """
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/**** Working on consensus Open, Cofactor and H3K27ac to develop quantile-normalizes consensus activities for each tissue ****/
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/**** Working on tissue-consensus Open, Cofactor and H3K27ac to develop tissue-consensus activities for each tissue ****/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
  * This process takes tissue data from tissues_index file and annotate regions
  * with molecular information from corresponding BigWig files and RNA-seq data
@@ -55,7 +59,7 @@ process Regions_annotate
     input:
 	val data_folder
 	val regions
-	tuple val(index), val(tissue), val(RNA_seq), val(Open), val(Cofactor), val(HiC)
+	tuple val(index), val(tissue), val(short), val(RNA_seq), val(CTCF), val(Open), val(Cofactor), val(HiC), val(Open_min), val(H3K27ac_min), val(CTCF_min)
 
     output:
 	val tissue
@@ -67,55 +71,19 @@ process Regions_annotate
 	RNA_seq     = "$RNA_seq"
 	Open        = "$Open"
 	Cofactor    = "$Cofactor"
-	transform_aaa = "$transform_aaa"
-	transform_bbb = "$transform_bbb"
+	CTCF        = "$CTCF"
+	open_min    = "$Open_min"
+	H3K27ac_min = "$H3K27ac_min"
+	CTCFc_min   = "$CTCF_min"
+	genome_file = "$projectDir/files/Human.bed"
+	expression  = "$minimum_expression"
 	template "Regions_annotate.pl"
 }
-/*
- * This process quantile-normalizes Activity data
- */
-process Regions_normalize
-{
-    cache false
 
-    input:
-	val data_folder
-	val tissues
-	val status
 
-    output:
-	val "done"
-
-    shell:
-	data_folder = "$data_folder"
-	tissues     = "$tissues"
-	template "Regions_normalize.R"
-}
-
-/*
- * This process wrote quantile-normalizes activities for enhancers
- */
-process Regions_final
-{
-    cache false
-
-    input:
-	val data_folder
-	tuple val(index), val(tissue), val(RNA_seq), val(Open), val(Cofactor), val(HiC)
-	val status
-
-    output:
-	val tissue
-
-    shell:
-	data_folder = "$data_folder"
-	tissue      = "$tissue"
-	template "Regions_final.R"
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/**** Using quantile-normalizes consensus activities to assign sample-specific activities for each sample and make full matrices ****/
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/**** Using tissue-consensus activities to assign sample-specific activities for each sample and make full matrices ****/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
  * This process makes Activity matrix for every individual sample within tissue by chromosome in temp folder
  */
@@ -189,9 +157,9 @@ process Make_pairs
 /**** The following processes dump and normalize HiC data ****/
 ///////////////////////////////////////////////////////////////
 /*
- * These two processes dumps HiC data. For all promoters versus all 2000 nt bins
+ * These four processes dumps HiC data. For all promoters versus all 2000 nt bins
  */
-process HiC_consensus
+process HiC_consensus_dump
 {
     cache false
 
@@ -208,10 +176,32 @@ process HiC_consensus
 	chrom        = "$chrom"
 	regions      = "$regions"
 	genome_file  = "$projectDir/files/Human.bed"
-	blanks_pl    = "$projectDir/bin/blanks.pl"
 
-	template "HiC_consensus.pl"
+	template "HiC_consensus_dump.pl"
 }
+process HiC_consensus_contacts
+{
+    cache false
+
+    input:
+	val data_folder
+	val regions
+	val chromosomes
+	val hic_dump
+
+    output:
+	val "done"
+
+    shell:
+	data_folder  = "$data_folder"
+	regions      = "$regions"
+	genome_file  = "$projectDir/files/Human.bed"
+	HiC_baseline = "$projectDir/files/HiC.baseline"
+	chromosomes  = "$chromosomes"
+
+	template "HiC_consensus_contacts.pl"
+}
+
 process HiC_dump
 {
     cache false
@@ -220,7 +210,6 @@ process HiC_dump
 	val data_folder
 	val regions
 	tuple val(sample), val(chrom)
-	val status
 
     output:
 	val v_return
@@ -232,9 +221,32 @@ process HiC_dump
 	regions      = "$regions"
 	v_return     = "$sample.$chrom"
 	genome_file  = "$projectDir/files/Human.bed"
-	blanks_pl    = "$projectDir/bin/blanks.pl"
 
 	template "HiC_dump.pl"
+}
+process HiC_contacts
+{
+    cache false
+
+    input:
+	val data_folder
+	val regions
+	val sample
+	val chromosomes
+	val hic_dump
+
+    output:
+	val "done"
+
+    shell:
+	data_folder  = "$data_folder"
+	sample       = "$sample"
+	regions      = "$regions"
+	genome_file  = "$projectDir/files/Human.bed"
+	HiC_baseline = "$projectDir/files/HiC.baseline"
+	chromosomes  = "$chromosomes"
+
+	template "HiC_contacts.pl"
 }
 
 
@@ -253,7 +265,7 @@ process First_qc
 	val activity_done
 	val samples_merge
 	val pairs_done
-	val hic_done
+	val hic_contacts
 	val hic_consensus
 
     output:
@@ -280,7 +292,7 @@ process Contacts_tissues
 
     input:
 	val data_folder
-	tuple val(index), val(tissue), val(RNA_seq), val(Open), val(Cofactor), val(HiC)
+	tuple val(index), val(tissue), val(short), val(RNA_seq), val(CTCF), val(Open), val(Cofactor), val(HiC), val(Open_min), val(H3K27ac_min), val(CTCF_min)
 	val chromosomes
 	path qc_first
 
@@ -294,8 +306,7 @@ process Contacts_tissues
 	HiC_samples  = "$HiC"
 	chromosomes  = "$chromosomes"
 	HiC_baseline = "$projectDir/files/HiC.baseline"
-	upstream     = "$projectDir/files/Upstream.smooth"
-	downstream   = "$projectDir/files/Downstream.smooth"
+	HiC_upper    = "$projectDir/files/HiC.upper"
 	template "Contacts_tissues.pl"
 }
 /*
@@ -323,14 +334,13 @@ process Contacts_merge
 	template "Contacts_merge.pl"
 }
 
-//////////////////////////////////////////////////////////////////////////////
-/**** Use of "Activity by Contact data" to develop input data for Glmnet ****/
-//////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
+/**** Use of Activity_by_Contact data to develop input data for predictions ****/
+/////////////////////////////////////////////////////////////////////////////////
 /*
- * This process scans "$tissue.regions.data" files, aggregates all expressed genes,
- * splits this list by chromosome into the blocks and returns them as a file
+ * This process aggregates all expressed genes and splits this list by chromosome into the blocks and returns them as a file
  */
-process Glmnet_expressed
+process Genes_expressed
 {
     cache false
 
@@ -345,39 +355,39 @@ process Glmnet_expressed
     shell:
 	data_folder = "$data_folder"
 	tissues     = "$tissues"
-	blocks      = 300
-	template "Glmnet_expressed.pl"
+	blocks      = genes_blocks
+	minimum_exp = "$minimum_expression"
+	template "Genes_expressed.pl"
 }
 
 /*
- * This process takes block of genes generated by "Genes_expressed". For every gene it generates ABC matrix,
- * simplifies this matrix to avoid small values and generates "$gene_id.input.matrix.gz" for linear modelling
+ * This process takes block of genes generated by "Genes_expressed" and generates ABC matrix for all tissues
 */
-process Glmnet_data
+process Genes_data
 {
     cache false
 
     input:
 	val data_folder
 	val samples_index
-	tuple val(group), val(list), val(score)
+	tuple val(chrom), val(list), val(score)
 
     output:
 	val "done"
 
     shell:
 	data_folder   = "$data_folder"
-	chrom         = "$group"
+	chrom         = "$chrom"
 	list          = "$list"
 	samples_index = "$samples_index"
-	template "Glmnet_data.R"
+	template "Genes_data.R"
 }
 
 /*
- * This process scans all "$tissue.regions.data" files one by one. For every tissue it obtains 
- * all expressed genes, splits this list into blocks and returns this list to "stdout"
- */
-process Glmnet_tissues
+ * This process scans all "$tissue.regions.data" files one by one. For every tissue it obtains
+ * all expressed genes, splits this list into blocks and returns this list for further analysis
+*/
+process Analysis_tissues
 {
     cache false
 
@@ -393,15 +403,17 @@ process Glmnet_tissues
     shell:
 	data_folder = "$data_folder"
 	tissues     = "$tissues"
-	blocks      = 100
+	blocks      = analysis_blocks
 	chromosomes = "$chromosomes"
-	template "Glmnet_tissues.pl"
+	minimum_exp = "$minimum_expression"
+	template "Analysis_tissues.pl"
 }
 
 /*
- * This process runs Glmnet
- */
-process Glmnet_run
+ * This process runs Analysis
+*/
+
+process Analysis_run
 {
     cache false
 
@@ -413,18 +425,41 @@ process Glmnet_run
 	val "done"
 
     shell:
-	data_folder   = "$data_folder"
-	tissue        = "$tissue"
-	task_index    = "$task_index"
-	chromosome    = "$chromosome"
-	list          = "$list"
-	transform_aaa = "$transform_aaa"
-	transform_bbb = "$transform_bbb"
-	template "Glmnet_run.R"
+	data_folder  = "$data_folder"
+	tissue       = "$tissue"
+	task_index   = "$task_index"
+	chromosome   = "$chromosome"
+	list         = "$list"
+	template "Analysis_run.R"
+}
+
+/////////////////////////////
+/**** Making the report ****/
+/////////////////////////////
+/*
+ * This process uses convetional ABC algorithm to make EPIraction_ABC predictions
+ */
+process EPIraction_ABC
+{
+    cache false
+
+    input:
+	val data_folder
+	tuple val(index), val(tissue), val(short), val(RNA_seq), val(CTCF), val(Open), val(Cofactor), val(HiC), val(Open_min), val(H3K27ac_min), val(CTCF_min)
+	val status
+
+    output:
+	val tissue
+
+    shell:
+	data_folder  = "$data_folder"
+	tissue       = "$tissue"
+	minimum_exp  = "$minimum_expression"
+	template "EPIraction_ABC.pl"
 }
 
 /*
- * This process agregates predicted promoter-enhancer pairs and makes final report data
+ * This process agjust ABC scores for cooccurrence and report
  */
 process Report_pairs
 {
@@ -432,7 +467,8 @@ process Report_pairs
 
     input:
 	val data_folder
-	tuple val(index), val(tissue), val(RNA_seq), val(Open), val(Cofactor), val(HiC)
+	tuple val(index), val(tissue), val(short), val(RNA_seq), val(CTCF), val(Open), val(Cofactor), val(HiC), val(Open_min), val(H3K27ac_min), val(CTCF_min)
+	val chromosomes
 	val status
 
     output:
@@ -444,6 +480,10 @@ process Report_pairs
 	genome_file  = "$projectDir/files/Human.genome"
 	interact     = "$projectDir/files/interact.as"
 	HiC_baseline = "$projectDir/files/HiC.baseline"
+	minimum_exp  = "$minimum_expression"
+	chromosomes  = "$chromosomes"
+	version      = "$version"
+
 	template "Report.pl"
 }
 
@@ -453,12 +493,10 @@ workflow
     All_tissues = indexData.flatMap{ row -> row.tissue }                                                   | toList
     HiC_samples = indexData.flatMap{ row -> row.HiC    } | flatMap{  it -> it.split(";") } | unique        | toList
 
-//#####################################################################################
-//### Here I normalize Open chromatin, Cofactor and H3K27ac at the level of tissues ###
-//#####################################################################################
-    annotation_done = Regions_annotate(data_folder,regions,indexData.flatMap())     | collect
-    normalize_done  = Regions_normalize(data_folder,All_tissues,annotation_done)    | collect
-    activity_done   = Regions_final(data_folder,indexData.flatMap(),normalize_done) | collect
+//################################################################################################
+//### Here I develop tissue-consensus Activities based on Open chromatin, Cofactor and H3K27ac ###
+//################################################################################################
+    activity_done = Regions_annotate(data_folder,regions,indexData.flatMap()) | collect
 
 //#############################################################################
 //### Here I write Activities for each enhancer in each individual H3K27ac  ###
@@ -469,28 +507,34 @@ workflow
 //####################################################################
 //### Here I write all gene-enhancer pairs, dump Hi-C data and QC  ###
 //####################################################################
-    hic_consensus  = HiC_consensus(data_folder,regions,chromosomes.flatMap())                                         | collect
-    hic_done       = HiC_dump(data_folder,regions,HiC_samples.flatMap().combine(chromosomes.flatMap()),hic_consensus) | collect
-
     pairs_done    = Make_pairs(data_folder,regions,chromosomes.flatMap()) | collect
+
+    hic_consensus = HiC_consensus_dump(data_folder,regions,chromosomes.flatMap())                      | collect
+    hic_done      = HiC_dump(data_folder,regions,HiC_samples.flatMap().combine(chromosomes.flatMap())) | collect
+
+    hic_consensus = HiC_consensus_contacts(data_folder,regions,chromosomes,hic_consensus)              | collect
+    hic_done      = HiC_contacts(data_folder,regions,HiC_samples.flatMap(),chromosomes,hic_done)       | collect
+
     first_qc      = First_qc(data_folder, All_tissues, HiC_samples, chromosomes, activity_done, samples_merge, pairs_done, hic_done, hic_consensus) | collect
 
-//########################################################################
-//### Here I form tissue-specific Contact and Activity-by-Contact data ###
-//########################################################################
+//#########################################################################
+//### Here I form tissue-specific Contact and Activity-by-Contact data. ###
+//#########################################################################
     contacts_done  = Contacts_tissues(data_folder,indexData.flatMap(),chromosomes,first_qc)              | collect
     contacts_merge = Contacts_merge(data_folder,All_tissues,regions,chromosomes.flatMap(),contacts_done) | collect
 
-//##############################################
-//### Here I form Glmnet data and run Glmnet ###
-//##############################################
-    All_genes   = Glmnet_expressed(data_folder,All_tissues,contacts_merge) | splitCsv(header:true, sep: '\t')           | toList
-    data_status = Glmnet_data(data_folder, samples_index, All_genes.flatMap())                                          | collect
-    Tis_genes   = Glmnet_tissues(data_folder, All_tissues, chromosomes, data_status) | splitCsv(header:true, sep: '\t') | toList
-    glmnet_done = Glmnet_run(data_folder,Tis_genes.flatMap())               | collect
+//###############################################################
+//### Here I form ABC matrixes for each gene and run analysis ###
+//###############################################################
+    All_genes   = Genes_expressed(data_folder,All_tissues,contacts_merge) | splitCsv(header:true, sep: '\t') | toList
+    data_status = Genes_data(data_folder, samples_index, All_genes.flatMap())                                | collect
+
+    Tis_genes     = Analysis_tissues(data_folder, All_tissues, chromosomes, data_status) | splitCsv(header:true, sep: '\t') | toList
+    analysis_done = Analysis_run(data_folder,Tis_genes.flatMap())                                                           | collect
 
 //##############################
 //### Here I report the data ###
 //##############################
-    report_done = Report_pairs(data_folder,indexData.flatMap(),glmnet_done) | collect
+    abc_done    = EPIraction_ABC(data_folder,indexData.flatMap(),analysis_done)           | collect
+    report_done = Report_pairs(data_folder,indexData.flatMap(),chromosomes,analysis_done) | collect
 }
